@@ -1,0 +1,153 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+#%# family=snmpauto
+#%# capabilities=snmpconf    
+
+import netsnmp
+import sys
+import re
+
+def is_number(val):
+	try:
+		int(val)
+		return True
+	except ValueError:
+		return False
+
+def mac2oid(mac):
+	maclist = mac.split(":")
+	return ".".join(map(lambda x: str(int(x,16)),maclist))
+	
+if len(sys.argv) == 2 and sys.argv[1] == "snmpconfig":
+	print "require .1.3.6.1.4.1.14525.4.2.1.1.0 [a-z0-9]\n";
+	sys.exit(0);
+
+argname = re.search('snmp_(.*)_wlc', sys.argv[0])
+hostname = argname.group(1)
+
+community   = 'public'
+max_clients = 20
+userdict = { 'maja' : '88:e8:7f:b8:c9:2e' }
+
+baseoid = ".1.3.6.1.4.1.14525.4"
+
+if len(sys.argv) > 1 and sys.argv[1] == "config":
+	print "host_name " + hostname
+	print ""
+	print "multigraph sys_wlc_radio"
+	print ""
+	print "graph_title Wireless Radio associations"
+	print "graph_vlabel Number"
+	print "graph_args --base 1000 -l 0 -u " + str(max_clients)
+	print "graph_info This graph displays the number of wireless clients associated with each Radio"
+	print "graph_category clients"
+	print ""
+	print "wlc_radio_total.label Total Clients"
+	print "wlc_radio_total.info Total number of associated clients on all SSIDs"
+	print "wlaradio24.label 2.4GHz radio clients"
+	print "wlaradio24.info NG clients"
+	print "wlaradio5.label 5GHz radio clients"
+	print "wlaradio5.info NA clients"
+	print ""
+	print "multigraph sys_wlc_user"
+	print ""
+	print "graph_title User specific associations"
+	print "graph_vlabel Number"
+	print "graph_args --base 1000 -l 0 -u 5"
+	print "graph_info This graph displays the wireless access assoc for specific users"
+	print "graph_category clients"
+	print ""
+	for user in userdict:
+		print "wlc_user_" + user + ".label " + user
+		print "wlc_user_" + user + ".info " + user + " association, mac: " + userdict[user]
+	print ""
+	print "multigraph sys_wlc_ssid"
+	print ""
+	print "graph_title Wireless SSID associations"
+	print "graph_vlabel Number"
+	print "graph_args --base 1000 -l 0 -u " + str(max_clients)
+	print "graph_info This graph displays the number of wireless clients associated with each SSID"
+	print "graph_category clients"
+	print ""
+	print "wlc_ssid_total.label Total Clients"
+	print "wlc_ssid_total.info Total number of associated clients on all SSIDs"
+	
+
+	ssidsoid = baseoid + ".5.1.1.7.1.4"	
+	# Print SSIDs
+	try:
+		ssidobj = netsnmp.VarList(netsnmp.Varbind(ssidsoid))
+		session = netsnmp.Session(Version = 2, DestHost = hostname, Community = community, UseNumeric = 1, Timeout = 250000, Retries = 2)
+		session.walk(ssidobj)
+		
+	except Exception as exception_error:
+		print "DEBUG: snmp issue"
+		sys.exit(0)
+
+	# for every SSID, don't care about radio
+	ssiddict = {}
+
+	for result in ssidobj:
+		mac = (result.tag[len(ssidsoid)+1:]+"."+result.iid).split(".")
+		mac = ":".join(map(lambda x: hex(int(x))[2:],mac))
+		ssiddict[result.val.lower()] = [ result.val, mac ]
+
+	for ssid in ssiddict:
+		values = ssiddict[ssid]
+		print "ssid_" + ssid + ".label " + values[0]
+		print "ssid_" + ssid + ".info ssid " + values[0] + " on MAC " + values[1]
+		
+	
+else:
+	try:
+		radioname = { '1' : 'wlaradio24', '2' : 'wlaradio5' }
+		radiodict = { '1' : 0, '2' : 0 }
+	
+		clientssid  = baseoid + ".4.1.1.1.1.15";
+		clientradio = baseoid + ".4.1.1.1.1.8";
+
+		session = netsnmp.Session(Version = 2, DestHost = hostname, Community = community, UseNumeric = 1, Timeout = 250000, Retries = 2)
+
+		clientobjs = netsnmp.VarList(netsnmp.Varbind(clientssid))
+		session.walk(clientobjs)
+
+		print "multigraph sys_wlc_ssid"
+
+		clientstotal = 0
+		clientsdict = {}
+		for res in clientobjs:
+			clientstotal += 1
+			clientsdict[res.val] = clientsdict.get(res.val, 0) + 1
+
+		print "wlc_ssid_total.value " + str(clientstotal)
+		for ssid in clientsdict:
+			print "ssid_" + ssid.lower() + ".value " + str(clientsdict[ssid])
+		
+		print ""
+		print "multigraph sys_wlc_radio"
+		print "wlc_radio_total.value " + str(clientstotal)
+	
+		radioobjs = netsnmp.VarList(netsnmp.Varbind(clientradio))
+		session.walk(radioobjs)
+
+		for res in radioobjs:
+			radiodict[res.val] += 1
+	
+		for radio in radioname:
+			print radioname[radio] + ".value " + str(radiodict[radio])
+
+		print ""
+		print "multigraph sys_wlc_user"
+		for user in userdict:
+			userssid = clientssid + "." + mac2oid(userdict[user])
+			userobjs = netsnmp.VarList(netsnmp.Varbind(userssid))
+			session.get(userobjs)
+			if userobjs[0].val == "":
+				print "wlc_user_" + user + ".value 0"
+			else:
+				print "wlc_user_" + user + ".value 1"
+
+	except Exception as exception_error:
+		print "DEBUG: snmp issue"
+		sys.exit(0)

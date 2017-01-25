@@ -1,0 +1,184 @@
+#!/usr/bin/perl -w
+# -*- cperl -*-
+
+=head1 NAME
+
+snmp__ive_ - SNMP plugin to monitor Juniper IVE VPN gateways
+
+=head1 APPLICABLE SYSTEMS
+
+
+Using a command such as "munin-node-configure --snmp
+172.16.121.2 --snmpversion 2c --snmpcommunity public | sh -x"
+should identify whether this plugin can apply.
+
+
+=head1 CONFIGURATION
+
+As a rule SNMP plugins need site specific configuration.  The default
+configuration (shown here) will only work on insecure sites/devices:
+
+   [snmp_*]
+	env.version 2
+        env.community public
+
+In general SNMP is not very secure at all unless you use SNMP version
+3 which supports authentication and privacy (encryption).  But in any
+case the community string for your devices should not be "public".
+
+Please see 'perldoc Munin::Plugin::SNMP' for further configuration
+information.
+
+=head1 MIB INFORMATION
+
+This plugin requires JUNIPER-VIRTUALCHASSIS-MIB information.
+
+=head1 MAGIC MARKERS
+
+  #%# family=snmpauto
+  #%# capabilities=snmpconf
+
+=head1 AUTHOR
+
+Copyright (C) 2013 Zacharias El Banna
+
+=head1 LICENSE
+
+GPLv2
+
+=cut
+
+use strict;
+use Munin::Plugin::SNMP;
+
+#
+# Require juniper ive..
+if (defined $ARGV[0] and $ARGV[0] eq "snmpconf") {
+    print ".1.3.6.1.4.1.12532.6.0\n";
+    exit 0;
+}
+
+if ($ARGV[0] and $ARGV[0] eq "config") {
+
+  my $host = undef;
+  my $port = undef;
+  if ($0 =~ /^(?:|.*\/)snmp_([^_]+)_ive$/) {
+    $host  = $1;
+    if ($host =~ /^([^:]+):(\d+)$/) {
+      $host = $1;
+      $port = $2;
+    }
+  }
+  print "host_name $host\n" unless $host eq 'localhost';
+  print <<END1;
+
+multigraph sys_users
+graph_title System Users
+graph_vlabel Users
+graph_args --base 1000 -l 0 -u 10
+graph_category system
+
+users_tot.label Total
+users_tot.info The numbers of users, all types
+users_web.label Web
+users_web.info Number of web users
+users_mail.label Mail
+users_mail.info Number of mail users
+
+
+multigraph sys_cpu
+graph_title CPU usage
+graph_vlabel %
+graph_args --base 1000 -u 100 -l 0
+graph_category system
+
+cpu.label CPU
+
+multigraph sys_disk
+graph_title Filesystem usage
+graph_vlabel Percentage
+graph_args --base 1000 -u 100 -l 0
+graph_category disk
+
+disk.label root mount
+
+multigraph sys_mem
+graph_title Memory usage
+graph_vlabel Percentage
+graph_args --base 1000 -u 100 -l 0
+graph_category memory
+
+mem.label Sys mem
+swap.label Swap mem
+
+multigraph sys_tunnels
+graph_title VPN connections
+graph_vlabel connections
+graph_args --base 1000 -l 0 -u 10
+graph_category clients
+
+vpn.label VPN tunnels
+ssl.label SSL tunnels
+END1
+  exit 0;
+}
+
+##########################################################################
+#
+# --  Ok, start retrieving some data
+#
+##
+
+my $oidIVEBase = '.1.3.6.1.4.1.12532';
+
+#
+# snmpwalk -v 2c -c public -O nU 172.16.121.10 juniper-ive
+#
+#
+#
+my $oidUsersTot			= "$oidIVEBase.12";
+my $oidUsersWeb			= "$oidIVEBase.2";
+my $oidUsersMail		= "$oidIVEBase.3";
+
+my $oidCpu				= "$oidIVEBase.10";
+my $oidDisk				= "$oidIVEBase.25";
+my $oidMem              = "$oidIVEBase.11";
+my $oidSwap             = "$oidIVEBase.24";
+
+my $oidVPN              = "$oidIVEBase.43";
+my $oidSSL              = "$oidIVEBase.44";
+
+my $session = Munin::Plugin::SNMP->session();
+my $data = $session->get_entries(-columns => [  $oidUsersTot,
+						$oidUsersWeb,
+						$oidUsersMail,
+						$oidCpu,
+						$oidDisk,
+						$oidMem,
+						$oidSwap,
+						$oidVPN,
+						$oidSSL
+ ]);
+
+print <<END2;
+multigraph sys_users
+users_tot.value $data->{"$oidUsersTot.0"}
+users_web.value $data->{"$oidUsersWeb.0"}
+users_mail.value $data->{"$oidUsersMail.0"}
+
+multigraph sys_cpu
+cpu.value $data->{"$oidCpu.0"}
+
+multigraph sys_disk
+disk.value $data->{"$oidDisk.0"}
+
+multigraph sys_mem
+mem.value $data->{"$oidMem.0"}
+swap.value $data->{"$oidSwap.0"}
+
+multigraph sys_tunnels
+vpn.value $data->{"$oidVPN.0"}
+ssl.value $data->{"$oidSSL.0"}
+END2
+
+exit 0;

@@ -1,0 +1,127 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+__author__ = "Zacharias El Banna"
+__version__ = "2.0"
+__status__ = "Production"
+
+import netsnmp
+import sys
+import re
+
+if len(sys.argv) == 2 and sys.argv[1] == "snmpconfig":
+ print "require 1.3.6.1.4.1.2636.3.39.1.12.1.1.1.3.0\n";
+ sys.exit(0);
+
+argname = re.search('snmp_(.*)_srx', sys.argv[0])
+hostname = argname.group(1)
+
+if len(sys.argv) > 1 and sys.argv[1] == "config":
+ print "host_name " + hostname
+ print """
+multigraph sys_temp
+graph_title System Temperature
+graph_vlabel Degrees Celsius
+graph_args --base 1000 -u 100 -l 0
+graph_category temp
+temp.label Temp
+temp.info The temperature of the system, read from Octeon CPU register
+temp.critical 80
+
+multigraph sys_cpu
+graph_title CPU usage
+graph_vlabel %
+graph_args --base 1000 -u 100 -l 0
+graph_category system
+average.label Average
+last1.label Last minute
+last5.label Last 5 minutes
+last15.label Last 15 minutes
+
+multigraph fwd_cpu
+graph_title Forwarding CPU usage
+graph_args --base 1000 -u 100 -l 0
+graph_info This graph displays the cpu utilization for the micro kernel, e.g. the dedicated core on a branch SRX, as well as the real time thread responsible for packet processing
+graph_vlabel %
+graph_category forwarding
+fwdkern.label Kernel
+fwdkern.info Micro kernel CPU usage
+fwdrt.label Real Time
+fwdrt.info Real time thread of micro kernel that mimics an NPU/SPU
+
+multigraph fwd_mem
+graph_title Forwarding Memory Utilization
+graph_vlabel Percentage
+graph_args --base 1000 -u 100 -l 0
+graph_category forwarding
+memory.label Memory
+
+multigraph fwd_sess
+graph_title Session allocation
+graph_vlabel Count
+graph_args --base 1000 -l 0
+graph_category forwarding
+sessions.label Active Sessions
+
+multigraph sys_disk
+graph_title Filesystem usage (in %)
+graph_vlabel Percentage
+graph_args --base 1000 -u 100 -l 0
+graph_category disk
+diskroot.label root mount
+diskvar.label var mount"""
+
+else:
+ oids = netsnmp.VarList(netsnmp.Varbind(".1.3.6.1.4.1.2636.3.1.13.1.7.9.1.0.0"),	# Temp
+						netsnmp.Varbind(".1.3.6.1.4.1.2636.3.1.13.1.8.9.1.0.0"), 	# CpuAvg
+						netsnmp.Varbind(".1.3.6.1.4.1.2636.3.1.13.1.20.9.1.0.0"),	# CpuLast1Min
+						netsnmp.Varbind(".1.3.6.1.4.1.2636.3.1.13.1.21.9.1.0.0"),	# CpuLast5Min
+						netsnmp.Varbind(".1.3.6.1.4.1.2636.3.1.13.1.22.9.1.0.0"),	# CpuLast15Min
+						netsnmp.Varbind(".1.3.6.1.4.1.2636.3.34.1.1.0"),			# FwdKernCpu
+						netsnmp.Varbind(".1.3.6.1.4.1.2636.3.34.1.2.0"),			# FwdRtCPU
+						netsnmp.Varbind(".1.3.6.1.4.1.2636.3.34.1.3.0"),			# FwdMem
+						netsnmp.Varbind(".1.3.6.1.4.1.2636.3.39.1.12.1.1.1.6.0"),	# SessAlloc
+						netsnmp.Varbind(".1.3.6.1.4.1.2636.3.39.1.12.1.1.1.7.0"),	# SessMax
+						netsnmp.Varbind(".1.3.6.1.2.1.25.2.3.1.5.1"),				# RootTot
+						netsnmp.Varbind(".1.3.6.1.2.1.25.2.3.1.6.1"),				# RootUse
+						netsnmp.Varbind(".1.3.6.1.2.1.25.2.3.1.5.6"),				# VarTot
+						netsnmp.Varbind(".1.3.6.1.2.1.25.2.3.1.6.6"))				# VarUSe
+
+ try:
+  session = netsnmp.Session(Version = 2, DestHost = hostname, Community = "public", UseNumeric = 1, Timeout = 250000, Retries = 2)
+  session.get(oids)
+		
+  if session.ErrorStr == "Timeout":
+   exit(1)
+
+  print "multigraph sys_temp"
+  print "temp.value " + oids[0].val
+  print ""
+  print "multigraph sys_cpu"
+  print "average.value " + oids[1].val
+  print "last1.value " + oids[2].val
+  print "last5.value " + oids[3].val
+  print "last15.value " + oids[4].val
+  print ""
+  print "multigraph fwd_cpu"
+  print "fwdkern.value " + oids[5].val
+  print "fwdrt.value " + oids[6].val
+  print ""
+  print "multigraph fwd_mem"
+  print "memory.value " + oids[7].val
+  print ""
+  print "multigraph fwd_sess"
+  print "sessions.value " + oids[8].val
+  print ""
+		
+  # Calc disk usage
+  # 10 - 13
+  print "multigraph sys_disk"
+  rootTot = int(oids[10].val)
+  print "diskroot.value " + str(100 * int(oids[11].val) / rootTot) if rootTot > 0 else "0"
+  varTot = int(oids[12].val)
+  print "diskvar.value " + str(100 * int(oids[13].val) / varTot) if varTot > 0 else "0"	                                                
+
+ except Exception as exception_error:
+  print "DEBUG: snmp issue: " + str(exception_error)
+  sys.exit(0)

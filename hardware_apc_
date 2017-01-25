@@ -1,0 +1,52 @@
+#!/bin/bash
+#
+# Assumes _<hostname>
+#
+HOSTNAME=`echo "$0" | cut -d_ -f 3`
+
+if [ "x$1" == "xconfig" ]; then
+echo "host_name $HOSTNAME
+
+multigraph hw_apc_power
+graph_title Battery Power state
+graph_args --base 1000 -l 0 -u 100
+graph_vlabel Remaining power (%)
+graph_scale no
+graph_category system
+graph_info APC battery status
+power.label Power level
+power.info Battery power level in percent
+
+multigraph hw_apc_time
+graph_title Battery Time state
+graph_args --base 1000 -l 0 -u 120
+graph_vlabel Remaining time (min)
+graph_scale no
+graph_category system
+graph_info APC battery status
+time.label Battery level
+time.info Battery remaining time in minutes
+
+multigraph hw_apc_temp
+graph_title UPS Temp
+graph_args --base 1000 -l 0 -u 50
+graph_vlabel Temp (degrees C)
+graph_scale no
+graph_category temp
+graph_info APC battery status
+temp.label Battery temperature
+temp.info UPS temperature"
+
+else
+ 
+ APCFETCH=$(/sbin/apcaccess -u status)
+
+ echo "multigraph hw_apc_power"
+ echo "$APCFETCH" | awk '/BCHARGE/{  split($3,vals,"."); print "power.value",vals[1]; exit; };'
+ echo ""
+ echo "multigraph hw_apc_time"
+ echo "$APCFETCH" | awk '/TIMELEFT/{ split($3,vals,".");  print "time.value",vals[1]; exit; };'
+ echo ""
+ echo "multigraph hw_apc_temp"
+ echo "$APCFETCH" | awk '/ITEMP/{ split($3,vals,".");  print "temp.value",vals[1]; exit; };'
+fi

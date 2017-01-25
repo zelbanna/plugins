@@ -1,0 +1,271 @@
+#!/usr/bin/perl -w
+# -*- perl -*-
+
+=head1 NAME
+
+snmp__ap - snmp host plugin for monitoring juniper AX411 AP
+
+=head1 APPLICABLE SYSTEMS
+
+Using a command such as "munin-node-configure --snmp
+192.168.0.64 --snmpversion 2c --snmpcommunity public | sh -x"
+should identify whether this plugin can apply.
+
+=head1 CONFIGURATION
+
+This is a hostname plugin. The name between snmp and ap should
+be a hostname to contact via SNMP.
+
+
+
+As a rule SNMP plugins need site specific configuration.  The default
+configuration (shown here) will only work on insecure sites/devices:
+
+   [snmp_*]
+        env.version 2
+        env.community public
+
+In general SNMP is not very secure at all unless you use SNMP version
+3 which supports authentication and privacy (encryption). 
+
+=head1 AUTHOR
+
+zelbanna
+
+=head1 LICENSE
+
+GPLv2
+
+=head1 MAGIC MARKERS
+
+  #%# family=snmpauto
+  #%# capabilities=snmpconf
+
+=cut
+
+use strict;
+use Net::SNMP qw(:snmp DEBUG_ALL);
+use Net::MAC;
+
+#
+# Require juniper ax411...
+if (defined $ARGV[0] and $ARGV[0] eq "snmpconf") {
+    print "require .1.3.6.1.4.1.2636.1.1.28.1.1.2.0\n";
+    exit 0;
+}
+
+
+# requires a hostname and a community string as its arguments
+
+my $hostname = undef;
+if ($0 =~ /^(?:|.*\/)snmp_([^_]+)_ap$/) { $hostname  = $1; }
+
+my $community	= ($ENV{'community'} || 'public');
+my $version	= ($ENV{'version'} || 2);
+my $filepath	= ($ENV{'filepath'} || '/tmp'); 
+my $max_clients	= ($ENV{'maxclients'} || 32);
+
+die "ERROR: host_name:undefined comm:$community" unless ($hostname);
+
+my $mac_file	= "$filepath/store-mac-$hostname.txt";
+my $vap_file	= "$filepath/store-vap-$hostname.txt";
+
+my $baseoid =	 ".1.3.6.1.4.1.2636.1.1.28";
+my $clientsoid = "$baseoid.7.1.1.2";
+my $vapsoid =	 "$baseoid.5.1.1.11";
+
+my %vapids = (
+    'wlan0' 	=> 1,
+    'wlan0vap1' => 2,
+    'wlan0vap2' => 3,
+    'wlan0vap3' => 4,
+    'wlan0vap4' => 5,
+    'wlan0vap5' => 6,
+    'wlan0vap6' => 7,
+    'wlan0vap7' => 8,
+    'wlan0vap8' => 9,
+    'wlan0vap9' => 10,
+    'wlan0vap10' => 11,
+    'wlan0vap11' => 12,
+    'wlan0vap12' => 13,
+    'wlan0vap13' => 14,
+    'wlan0vap14' => 15,
+    'wlan0vap15' => 16,
+    'wlan1'	=> 17,
+    'wlan1vap1' => 18,
+    'wlan1vap2' => 19,
+    'wlan1vap3' => 20,
+    'wlan1vap4' => 21,
+    'wlan1vap5' => 22,
+    'wlan1vap6' => 23,
+    'wlan1vap7' => 24,
+    'wlan1vap8' => 25,
+    'wlan1vap9' => 26,
+    'wlan1vap10' => 27,
+    'wlan1vap11' => 28,
+    'wlan1vap12' => 29,
+    'wlan1vap13' => 30,
+    'wlan1vap14' => 31,
+    'wlan1vap15' => 32
+);
+
+my @radioname = ( '5GHz', '2.4GHz' );
+
+my ($s, $e) = Net::SNMP->session( 	-hostname => $hostname,
+                              		-community => $community,
+				       	-version => $version
+				);
+die "ERROR: ($0) $e" unless ($s);
+
+if ($ARGV[0] && $ARGV[0] eq "config") {
+	#
+	# Print munin config
+	#
+
+	open LOGFILE, ">$vap_file" or die "ERROR: $vap_file cannot be opened.";
+
+	# multigraph sys_ap_clients
+
+	print <<END;
+host_name $hostname
+
+graph_title Access Point client associations
+graph_vlabel Number
+graph_args --base 1000 -l 0 -u $max_clients
+graph_info This graph displays the number of access point clients associated with each SSID
+graph_category clients
+vaptotal.label Total Clients
+vaptotal.info Total number of associated clients on all SSIDs
+END
+        my @args = ( -varbindlist => [ $vapsoid ] );
+
+        if ($s->version == SNMP_VERSION_1) {
+                my $oid;
+
+                while (defined($s->get_next_request(@args))) {
+                        $oid = ($s->var_bind_names())[0];
+                        if (!oid_base_match($vapsoid, $oid)) { last; }
+
+	                        ($oid) =~ /$vapsoid\.(.+)/;
+				my $vapid = $1;
+				my $vapname = $s->var_bind_list()->{$oid};			
+
+				if ($vapname !~ /Virtual Access Point/ && $vapid < 33) { 
+					my $radioid = int($vapid / 16);
+					printf("vap%s.label %s (%s)\n", $vapid, $s->var_bind_list()->{$oid}, $radioname[$radioid]);
+					printf("vap%s.info Virtual Access Point %s, Radio: %s\n", $vapid,$vapid, $radioname[$radioid]);
+
+					printf(LOGFILE "vap%s\t%s\t%s\n", $vapid, $s->var_bind_list()->{$oid},$radioname[$radioid]);
+				}
+
+                        @args = (-varbindlist => [$oid]);
+                }
+          
+        } else {
+		push(@args, -maxrepetitions => 25); 
+
+		outer: while (defined($s->get_bulk_request(@args))) {
+
+			my @oids = oid_lex_sort(keys(%{$s->var_bind_list()}));
+
+			foreach (@oids) {
+				if (!oid_base_match($vapsoid, $_)) { last outer; }
+				my $oid = $_;
+
+				($oid) =~ /$vapsoid\.(.+)/;
+				my $vapid = $1;
+				my $vapname = $s->var_bind_list()->{$oid};			
+
+				if ($vapname !~ /Virtual Access Point/ && $vapid < 33) { 
+					my $radioid = int($vapid / 16);
+					printf("vap%s.label %s (%s)\n", $vapid, $s->var_bind_list()->{$oid}, $radioname[$radioid]);
+					printf("vap%s.info Virtual Access Point %s, Radio: %s\n", $vapid,$vapid, $radioname[$radioid]);
+
+
+					printf(LOGFILE "vap%s\t%s\t%s\n", $vapid, $s->var_bind_list()->{$oid},$radioname[$radioid]);
+				}
+
+				# Make sure we have not hit the end of the MIB
+				if ($s->var_bind_list()->{$_} eq 'endOfMibView') { last outer; } 
+			}
+
+			# Get the last OBJECT IDENTIFIER in the returned list
+			@args = (-maxrepetitions => 25, -varbindlist => [pop(@oids)]);
+   		}
+	}
+	close LOGFILE;
+
+} else {
+	#
+	#  Bulk_get data
+	# - save to file 
+	# 00:11:22:33:44:55 - wlanXvapY
+	#
+
+	open LOGFILE, ">$mac_file" or die "ERROR: $mac_file cannot be opened.";
+
+	my @vapidcnt = ( 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 );
+	my $vaptotal = 0;
+	my @args = ( -varbindlist => [ $clientsoid ] );
+
+	if ($s->version == SNMP_VERSION_1) {
+		my $oid;
+
+		while (defined($s->get_next_request(@args))) {
+			$oid = ($s->var_bind_names())[0];
+				if (!oid_base_match($clientsoid, $oid)) { last; }
+
+				($oid) =~ /$clientsoid\.(.+)/;
+				my $mac = Net::MAC->new('mac' => $1, 'base' => 10 );
+				my $vapid = $vapids{$s->var_bind_list()->{$oid}};
+				$vapidcnt[$vapid-1]++;
+				$vaptotal++;
+
+				printf(LOGFILE "vap%s\t%s\n", $vapid, uc $mac->convert( 'base' => 16, 'delimiter' => '-' ));
+
+			@args = (-varbindlist => [$oid]);
+   		}
+	} else {
+		push(@args, -maxrepetitions => 25); 
+
+		outer: while (defined($s->get_bulk_request(@args))) {
+
+			my @oids = oid_lex_sort(keys(%{$s->var_bind_list()}));
+
+			foreach (@oids) {
+				if (!oid_base_match($clientsoid, $_)) { last outer; }
+				my $oid = $_;
+
+				($oid) =~ /$clientsoid\.(.+)/;
+				my $mac = Net::MAC->new('mac' => $1, 'base' => 10 );
+				my $vapid = $vapids{$s->var_bind_list()->{$oid}};
+				$vapidcnt[$vapid-1]++;
+				$vaptotal++;
+
+				printf(LOGFILE "vap%s\t%s\n", $vapid, uc $mac->convert( 'base' => 16, 'delimiter' => '-' ));
+
+				# Make sure we have not hit the end of the MIB
+				if ($s->var_bind_list()->{$_} eq 'endOfMibView') { last outer; } 
+      			}
+
+			# Get the last OBJECT IDENTIFIER in the returned list
+			@args = (-maxrepetitions => 25, -varbindlist => [pop(@oids)]);
+   		}
+
+	}
+
+
+	#
+	# Now print the entire graph tree with all values... 
+	#
+	# print "multigraph sys_ap_clients\n";
+	print "vaptotal.value $vaptotal\n";
+	foreach  my $i (0 .. scalar(@vapidcnt)-1) {
+		printf "vap%s.value %s\n",$i+1, $vapidcnt[$i];
+	}
+	close LOGFILE;
+}
+
+
+$s->close();
+exit 0;

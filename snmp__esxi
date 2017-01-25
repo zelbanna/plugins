@@ -1,0 +1,152 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+#%# family=snmpauto
+#%# capabilities=snmpconf    
+
+import netsnmp
+import sys
+import re
+
+def is_number(val):
+ try:
+  int(val)
+  return True
+ except ValueError:
+  return False
+
+if len(sys.argv) == 2 and sys.argv[1] == "snmpconfig":
+ print "require .1.3.6.1.2.1.25.3.2.1.3.1\n";
+ sys.exit(0);
+
+argname = re.search('snmp_(.*)_esxi', sys.argv[0])
+hostname = argname.group(1)
+
+if len(sys.argv) > 1 and sys.argv[1] == "config":
+
+ memory = 1024
+ try:
+  memobj  = netsnmp.VarList(netsnmp.Varbind('.1.3.6.1.2.1.25.2.2.0'))
+  cpuobjs = netsnmp.VarList(netsnmp.Varbind('.1.3.6.1.2.1.25.3.2.1.3'))
+  
+  session = netsnmp.Session(Version = 2, DestHost = hostname, Community = "public", UseNumeric = 1, Timeout = 250000, Retries = 2)
+
+  session.get(memobj)
+  session.walk(cpuobjs)
+  
+  if (memobj[0].val != None):
+   memory = int(memobj[0].val) * 1024
+
+ except Exception as exception_error:
+  print "DEBUG " + str(exception_error)
+
+ print "host_name " + hostname
+ print ""
+ print "multigraph esxi_mem_info"
+ print "graph_title Memory usage"
+ print "graph_args --base 1024 -l 0 -u " + str(memory)
+ print "graph_info This graph displays the host memory usage"
+ print "graph_vlabel Amount "
+ print "graph_category memory"
+ print "memuse.label Used"
+ print "memuse.draw AREA"
+ print "memuse.info Used memory of host"
+ print "memfree.label Free"
+ print "memfree.draw STACK"
+ print "memfree.info Free memory of host"
+ print ""
+ print "multigraph esxi_vm_info"
+ print "graph_title VM_info_usage"
+ print "graph_args --base 1000 -u 30 -l 0"
+ print "graph_info This graph displays the number of VMs per host"
+ print "graph_vlabel Number"
+ print "graph_category hypervisor"
+ print "activevms.label Active VMs"
+ print "activevms.info Number of active VMs on the host"
+ print "downvms.label Shutdown VMs"
+ print "downvms.info Number of powered down VMs on the host"
+ print "totalvms.label Total VMs"
+ print "totalvms.info Number of VMs on the host"
+ print ""
+ print "multigraph esxi_cpu_info"
+ print "graph_title CPU usage"
+ print "graph_args --base 1000 -l 0"
+ print "graph_info This graph displays the host CPU utilization"
+ print "graph_vlabel (%)"
+ print "graph_category system"
+ for result in cpuobjs:
+  if str(result.val)[0:3] == "CPU":
+   print("cpu%s.label %s")%(result.iid, str(result.val)[17:])
+   print("cpu%s.info CPU Virtual Socket info %s") % (result.iid, result.iid)
+ print "cpuavg.label CPU Average"
+ print "cpuavg.label Average CPU usage for hosts CPU cores"
+
+else:
+ try:
+  memobjs = netsnmp.VarList(netsnmp.Varbind('.1.3.6.1.2.1.25.2.3'))
+  vmsobjs = netsnmp.VarList(netsnmp.Varbind('.1.3.6.1.4.1.6876.2.1.1.6'))
+  cpuobjs = netsnmp.VarList(netsnmp.Varbind('.1.3.6.1.2.1.25.3.3.1.2'))
+   
+  session = netsnmp.Session(Version = 2, DestHost = hostname, Community = "public", UseNumeric = 1, Timeout = 250000, Retries = 2)
+
+  session.walk(memobjs)
+  session.walk(vmsobjs)
+  session.walk(cpuobjs)
+
+ except Exception as exception_error:
+  print "DEBUG: snmp issue"
+  sys.exit(0)
+
+ id = 0
+ block = 0
+ memtot = 0
+ memuse = 0
+ vmsactive = 0
+ vmsdown = 0
+
+ # Does not work anymore :-( Fcking VMaware !!
+ 
+ for result in memobjs:
+  # Find .1.3.6.1.2.1.25.2.3.1.2 x with val n.n.n.20
+  if result.tag == ".1.3.6.1.2.1.25.2.3.1.2":
+   memtype = str(result.val).rsplit('.',1)[1]
+   if memtype == "20":
+    id = result.iid
+  # Find .1.3.6.1.2.1.25.2.3.1.4.x which gives val with "y Bytes" per block
+  elif result.iid == id and result.tag == ".1.3.6.1.2.1.25.2.3.1.4":
+   block = int(result.val)
+  # Find .1.3.6.1.2.1.25.2.3.1.5.x with number of blocks as memtot
+  elif result.iid == id and result.tag == ".1.3.6.1.2.1.25.2.3.1.5":
+   memtot = int(result.val) * block
+  # Find .1.3.6.1.2.1.25.2.3.1.6.x with number of blocks as memuse
+  elif result.iid == id and result.tag == ".1.3.6.1.2.1.25.2.3.1.6":
+   memuse = int(result.val) * block
+   break
+
+ for result in vmsobjs:
+  if result.val == "powered on":
+   vmsactive += 1
+  else:
+   vmsdown += 1
+
+ print "multigraph esxi_mem_info"
+ print "memuse.value " + str(memuse)
+ print "memfree.value " + str(memtot - memuse)
+ print ""
+ print "multigraph esxi_vm_info"
+ print "activevms.value " + str(vmsactive)
+ print "downvms.value " + str(vmsdown)
+ print "totalvms.value " + str(vmsdown + vmsactive)
+ print ""
+ print "multigraph esxi_cpu_info"
+ 
+ cpuavg, cpunum = 0, 0
+ for result in cpuobjs:
+  print("cpu%s.value %s") % (result.iid, result.val)
+  cpuavg += int(result.val)
+  cpunum += 1
+
+ if cpunum == 0:
+  cpunum = 1
+
+ print "cpuavg.value " + str(cpuavg / cpunum)

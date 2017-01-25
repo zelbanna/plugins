@@ -1,0 +1,55 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+#
+# create a host in /etc/hosts that is named "internet"
+#
+
+import subprocess
+import sys
+import re
+
+
+argname = re.search('ping_(.*)', sys.argv[0])
+pinghost = argname.group(1)
+
+if len(sys.argv) > 1 and sys.argv[1] == "config":
+
+	print "multigraph ping_measure_" + pinghost.replace(".","_")
+	print "graph_title IPv4 ping times to " + pinghost
+	print "graph_args --base 1000 -l 0"
+	print "graph_vlabel roundtrip time (ms)"
+	print "graph_category network"
+	print "graph_info This graph shows ping RTT statistics."
+	print "packetloss.label packet loss"
+	print "packetloss.graph no"
+	print "pingmin.label Min RTT"
+	print "pingmin.info Ping Min RTT statistics for " + pinghost
+	print "pingavg.label Avg RTT"
+	print "pingavg.info Ping Avg RTT statistics for " + pinghost
+	print "pingmax.label Max RTT"
+	print "pingmax.info Ping Max RTT statistics for " + pinghost
+else:
+
+	try:
+		print "multigraph ping_measure_" + pinghost.replace(".","_")
+		ping = subprocess.Popen(["ping", "-n", "-q", "-i", "0.5", "-w", "2", "-c", "4", pinghost],
+			stdout = subprocess.PIPE,
+			stderr = subprocess.PIPE)
+
+		out, error = ping.communicate()
+		m = re.compile("(\d+)% packet loss.*\nrtt min/avg/max/mdev = (\d+.\d+)/(\d+.\d+)/(\d+.\d+)/(\d+.\d+)", re.MULTILINE)
+
+		pingstats = m.search(str(out)).groups()
+
+		print "packetloss.value " + pingstats[0]
+		print "pingmin.value " + pingstats[1]
+		print "pingavg.value " + pingstats[2]
+		print "pingmax.value " + pingstats[3]
+
+	except Exception as exception_error:
+		print "DEBUG: ping issue with host named internet: " + str(exception_error)
+		print "packetloss.value U"
+		print "pingmin.value U"
+		print "pingavg.value U"
+		print "pingmax.value U"
+		sys.exit(0)
